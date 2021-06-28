@@ -3,7 +3,7 @@
 
 prod: .env
 	@echo "Starting Production Server"
-	ensurevolumes.sh
+	./ensurevolumes.sh
 	docker-compose -f docker-compose.yml up -d --force-recreate --remove-orphans
 stop:
 	@echo "Stopping Service"
