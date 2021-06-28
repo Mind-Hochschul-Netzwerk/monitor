@@ -1,0 +1,95 @@
+version: "3.5"
+services:
+  telegraf:
+    image: telegraf
+    restart: unless-stopped
+    environment:
+      HOST_PROC: /rootfs/proc
+      HOST_SYS: /rootfs/sys
+      HOST_ETC: /rootfs/etc
+    volumes:
+      - "./conf/telegraf.conf:/etc/telegraf/telegraf.conf:ro"
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "/sys:/rootfs/sys:ro"
+      - "/proc:/rootfs/proc:ro"
+      - "/etc:/rootfs/etc:ro"
+    networks:
+      - monitor
+
+  loki:
+    image: grafana/loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki-config.yml
+    volumes:
+      - "./conf/loki-config.yml:/etc/loki/loki-config.yml"
+    networks:
+      - monitor
+
+  promtail:
+    image: grafana/promtail
+    volumes:
+      - "/var/log:/var/log"
+      - "/var/lib/docker/containers:/var/lib/docker/containers"
+      - "${TRAEFIK_LOG_DIR}:/var/log/traefik/:ro"
+      - "./conf/promtail-config.yml:/etc/promtail/user-config.yml"
+    command: -config.file=/etc/promtail/user-config.yml
+    networks:
+      - monitor
+
+  grafana:
+    image: grafana/grafana
+    restart: unless-stopped
+    environment:
+      - GF_INSTALL_PLUGINS=flant-statusmap-panel,natel-discrete-panel
+      - GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=natel-discrete-panel,flant-statusmap-panel
+    expose:
+      - 3000
+    networks:
+      - monitor
+      - traefik
+    volumes:
+      - "./conf/grafana.ini:/etc/grafana/grafana.ini"
+      - "${VOLUMES_DIR}/grafana:/var/lib/grafana:rw"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "10"
+        tag: "{{.ImageName}}|{{.Name}}|{{.ImageFullID}}|{{.FullID}}"
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.grafana.entrypoints=websecure
+      - traefik.http.routers.grafana.rule=Host(`grafana.${DOMAINNAME}`)
+      - traefik.http.routers.grafana.middlewares=secheader@file
+      - traefik.http.services.grafana.loadbalancer.passhostheader=true
+      - traefik.http.services.grafana.loadbalancer.sticky=true
+      - traefik.http.services.grafana.loadbalancer.server.port=3000
+
+  influxdb:
+    image: influxdb
+    environment:
+      - INFLUXDB_MONITOR_STORE_ENABLED=FALSE
+    volumes:
+      - "./conf/influxdb.conf:/etc/influxdb/influxdb.conf:ro"
+      - "${VOLUMES_DIR}/influxdb:/var/lib/influxdb"
+    restart: unless-stopped
+    environment:
+      - DOCKER_INFLUXDB_INIT_USERNAME
+      - DOCKER_INFLUXDB_INIT_PASSWORD
+      - DOCKER_INFLUXDB_INIT_ORG
+      - DOCKER_INFLUXDB_INIT_BUCKET
+      - DOCKER_INFLUXDB_INIT_RETENTION
+    healthcheck:
+      test: ["CMD", "curl", "-sI", "http://127.0.0.1:8086/ping"]
+      interval: 30s
+      timeout: 1s
+      retries: 24
+    networks:
+      - monitor
+
+networks:
+  traefik:
+    name: traefik
+    external: true
+  monitor:
+    name: monitor
